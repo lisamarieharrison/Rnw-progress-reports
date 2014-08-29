@@ -1,0 +1,202 @@
+\documentclass{article}
+
+\begin{document}
+\title{Preliminary analysis of KAOS data}
+\author{Lisa-Marie Harrison}
+\maketitle
+
+<<readData, echo=FALSE>>=
+dat <- read.csv(file = "C:/Users/Lisa/Documents/phd/southern ocean/KAOS data/kaos_formatted.csv", header = T, fill = T)
+sv_diff <- read.csv(file = "C:/Users/Lisa/Documents/phd/southern ocean/KAOS data/sv_diff_na.csv", header = T)
+dat$Latitude <- as.numeric(as.character(dat$Latitude))
+@
+
+Firstly, plot the locations of the air-breathing predator observations to check whether
+they were made during the acoustic survey. A plot of the entire data set reveals that 
+air-breathing predator observations were made during the survey as well as on the 
+way to and from Tasmania.
+
+<<plotLocFull, echo=FALSE, fig.align='center'>>=
+#plot locations - full data set
+plot(dat$Longitude, dat$Latitude, xlab = "Longitude", ylab = "Latitude")
+title("Locations of air-breathing predator sightings - full data set")
+@
+
+A zoomed in plot shows that there were observations made throughout the acoustic
+survey. As with the acoustic survey, 13 transects layed out in a N S direction
+were surveyed multiple times.
+<<plotLocAnt, echo=FALSE, fig.align='center'>>=
+#plot locations - only antarctica
+plot(dat$Longitude, dat$Latitude, xlab = "Longitude", ylab = "Latitude",
+     xlim = c(61.5, 65.5), ylim = c(-67.5, -65.5))
+title("Locations of air-breathing predator sightings - Antarctica")
+@
+
+A histogram of the (UTC) times of observations indicates that observations were made
+throughout the day and night. During the survey there would have been approximately
+13 - 20 hours of daylight per day in January - March at -66 South Latitude. NOTE:
+Check which hours would be daylight hours during the survey, because animals will be
+less visible at night so direct comparison of night and day data is tricky.
+<<timeHist, echo=FALSE, fig.align='center'>>=
+#check time range of sightings
+hist(dat$Time, xlab = "Time (hhmm)", main = "Histogram of observation times (UTC)")
+@
+
+
+<<timeCheck, echo=FALSE>>=
+#check times against acoustic data
+#check times against acoustic data (only 3 days of acoustic data is available)
+obs  <- c(829: 976)
+num.obs <- length(obs)
+@
+
+After importing the 36 .raw acoustic files into Echoview, the dates covered only include
+15/01/2003 -17/01/2003 which is only one leg of the full survey. The number of air breathing predator observations during this period is \Sexpr{num.obs}. The initial 
+analyses will be run on this transect and the code can then be run on the full data set 
+when I can get it or on the BROKE-West acoustic/air breathing predator data.
+
+The data has been subsetted to only include sightings that are concurrent with the 
+available acoustic transect. The following table shows the number of sightings of each
+species seen. Note: more than one individual may have been seen per sighting.
+<<speciesSeen, echo=FALSE, comment=NA, fig.align='left', out.width=".5\\paperwidth">>=
+#subset data to only include times that overlap with the acoustic survey
+dat_sub <- dat[obs, ]
+dat_sub <- dat_sub[dat_sub$Longitude < 64.55, ]
+
+#table of species seen during acoustic survey
+sp.seen <- table(dat_sub$Species, dat_sub$Count)
+sightings <- unname(apply(sp.seen, 1, function(x)sum(x != 0)))
+ind <- unname(rowSums(sp.seen))
+
+sp <- matrix(sightings, ncol = 1)
+rownames(sp) <- levels(dat_sub$Species)
+sp <- sp[sightings != 0, ]
+sp_mat <- matrix(sp, ncol = 1)
+rownames(sp_mat) <- names(sp)
+colnames(sp_mat) <- c("Total Sightings")
+sp_mat
+@
+
+A plot of the cruise track with sighting data superimposed reveals that there are
+sightings that match up with the cruise track, although there aren't any sightings
+on the way to the study site. Due to the complete lack of sightings on this leg, 
+it appears that the route was "off effort" rather than just that there weren't
+any sightings (Need to verify this). There are also a handful of sightings that 
+don't have a cruise track associated with them, which may mean that the sonar
+system was turned off at this time.
+<<trackPoints, echo=FALSE, fig.align='center'>>=
+#plot of track with sighting locations superimposed
+gps <- unique(track[,c('Latitude','Longitude')]) #filter unique track values
+plot(gps$Longitude, gps$Latitude, xlab = "Longitude", ylab = "Latitude")
+points(dat_sub$Longitude, dat_sub$Latitude, col = "red", pch = 19)
+title("Cruise track (black) with sighting locations superimposed (red)")
+@
+
+Next, a depth and horizontal bin size for the krill integration windows must be 
+decided. To start with, a 10mx50m bin size will be used, with depth integrals of 
+10m and horizontal bins of 50m. For the 38kHz and 120kHz frequencies the mean value within each 50mx50m window will be extracted using Echoview. If the difference 
+between these values is 2 - 12dB the window likely contains krill. The krill 
+density can then be calculated using a wave born approximation formula.
+
+The following histogram shows the difference between 120kHz and 38kHz for each integration interval. The red lines at 2kHz and 12kHz indicate the outer boundaries of differences that are assumed to be krill. Of the \Sexpr{nrow(sv_diff)} integration intervals, there are \Sexpr{length(sv_diff[sv_diff >= 2 & sv_diff <= 12])} integration windows that are likely to have krill present. This is \Sexpr{round(length(sv_diff[sv_diff >= 2 & sv_diff <= 12])/nrow(sv_diff)*100, 2)} percent of the total integration windows (not including those that are noise).
+<<svDifference, echo=FALSE, fig.align='centre'>>=
+hist(sv_diff, main = "120kHz - 38kHz with lines at 2 and 12kHz")
+abline(v = c(2, 12), col = "red")
+@
+
+To start with, krill orientation is not included in the model. To compute density of krill in each integration interval from the mean volume backscattering strength in each 10m * 50m integration interval the following formula is used:
+
+The density per time unit is summed (density for each integration window through the depths at each time point are added), to get a total amount of krill in the water column (0 - 250m) during each 50m time window. The predator observations are then allocated to a window by finding which time interval they occured in.
+
+<<densityCalc, echo=FALSE>>=
+
+#calculate 120kHz - 38kHz for each 10x50 window
+sv_diff <- acoustic_120$Sv_mean - acoustic_38$Sv_mean
+sv_diff[sv_diff < -500 | sv_diff > 500] <- NA
+
+int_depth <- acoustic_38$Depth_mean
+int_time  <- acoustic_38$Time_M
+int_date  <- acoustic_38$Date_M
+int_td <- paste(int_date, int_time) #date time for each integration interval
+
+hist(sv_diff)
+abline(v = c(2, 12), col = "red")
+#write.csv(sv_diff, "sv_diff_na.csv", row.names = F)
+
+#convert to density using target strength
+sv_diff[sv_diff < 2 | sv_diff > 12] <- NA
+pv <- 0.028*sv_diff #g\m3
+p <- pv*(10*50) #g/interval
+
+#sum p through depths for each time point to find density in water column at each time
+pt <- rep(0, length(unique(int_td)))
+for (i in 1:length(unique(int_td))) {
+  w <- unique(int_td)[i]
+  t <- which(int_td == w)
+  pt[i] <- sum(na.omit(p[t]))
+  print(i)
+  if (1 == 1) flush.console()
+}
+
+#find date and middle time during an integration interval for unique intervals
+int_d <- unlist(strsplit(unique(int_td), "  "))[seq(1, length(unlist(strsplit(unique(int_td), "  "))), by = 2)]
+int_t <- unlist(strsplit(unique(int_td), "  "))[seq(2, length(unlist(strsplit(unique(int_td), "  "))), by = 2)]
+
+#find start and end times for each unique interval (rather than down all depths)
+#air breathing predator observations can then be assigned to an interval using these times
+t_s <- acoustic_38$Time_S[seq(1, length(acoustic_38$Time_S), by = 25)]
+t_e <- acoustic_38$Time_E[seq(1, length(acoustic_38$Time_E), by = 25)]
+
+#find time at middle of integration interval and remove : and .
+t_m <- acoustic_38$Time_M[seq(1, length(acoustic_38$Time_E), by = 25)]
+t_m <- gsub("[: -]", "" , t_m, perl=TRUE)
+t_m <- gsub("[. -]", "" , t_m, perl=TRUE)
+t_axt <- as.numeric(substr(t_m, start = 1, stop = 4))
+
+#assign predator sightings to intervals
+#pred is a 0 1 vector of whether there any sightings during an interval
+#multiple sightings are not reported, only presence/absence of sightings
+pred <- rep(0, length(unique(int_td)))
+for (i in 1:length(dat_sub$d)) {
+  t_s <- chron(times. = as.character(t_s), format = "h:m:s")
+  t_e <- chron(times. = as.character(t_e), format = "h:m:s")
+  
+  w <- which(int_d == dat_sub$d[i] & t_e > as.character(dat_sub$t[i])
+             & t_s < as.character(dat_sub$t[i]))
+  pred[w] <- 1
+}
+@
+
+These are then plotted against the total krill biomass in the water column. The krill density is shown in black and the red lines represent times during which air-breathing predator observations were made. From the plot below there are no obvious patterns between the krill density and predator sighting times. Without knowing the time 'on effort' for predator sightings, it is impossible to properly interpret this plot.
+
+<<densityTime, echo=FALSE, fig.align='center'>>=
+#plot density (summed through all depths) for each time interval
+#times of predator observations are shown with a red vertical line
+plot(pt, xlab = "time of day", ylab = "krill biomass", xaxt = "n")
+axis(1, at = seq(1, length(pt), by = 100), labels = t_axt[seq(1, length(pt), by = 100)])
+title("Krill biomass summed in top 250m and timing of predator sightings in red")
+abline(v = which(pred == 1), col = "red")
+@
+
+Plotting an image of krill biomass by depth against time gives an indication of how the swarms are distributed throught the water column. The locations of predator sightings are overlayed in black. Again, there is no obvious pattern between when predator sightings occur and krill biomass between 0-250m depth. For this image, the pixed size is each 10x50m integration interval.
+<<biomassImage, echo=FALSE, fig.align='center'>>=
+#plot krill biomass with predator locations in black
+p_ext_pred <- matrix(rep(pred, 25), nrow = 25, byrow = T) #add 1s to first row at intervals where there are predators
+p_ext_pred[p_ext_pred == 0 ] <- NA
+image(t(p_mat)[, nrow(p_mat):1], main = "krill biomass with predator locations overlayed")
+image(t(p_ext_pred)[, nrow(p_ext_pred):1], add = T, col = "black")
+@
+
+The exploratory plots so far indicate that there is absolutely no predictive power in the relationship between krill biomass and predator sightings. A binomial gam relating krill biomass to predator presence/absence shows that there is no significant relationship between the two variables and that predator presence cannot be predicted from krill biomass. The results are shown below and we can see from the flat fitted values line that there is no predictive power in this model.
+
+<<biomassGam, echo=FALSE>>=
+#glm for biomass ~ predator presence/absence
+biomass.glm <- glm(pred ~ pt, family = binomial)
+summary(biomass.glm)
+
+plot(pt, pred, xlab = "krill biomass", ylab = "predator presence/absence")
+title("Observed data with fitted values (red line) for biomass GLM pred ~ biomass")
+points(pt, fitted(biomass.glm), col = "red", type = "l")
+@
+
+\end{document}
