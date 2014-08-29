@@ -1,0 +1,45 @@
+\documentclass{article}
+
+\begin{document}
+\title{3D simulation batch test}
+\author{Lisa-Marie Harrison}
+\maketitle
+
+This report describes a simulation data set with 3 dimensions (x, y and z = depth) on a regularly spaced grid. 100 stations were used on a 10x10 grid. Each station has 51 equally spaced depth values from 0 - 250m. There are three separable components to the correlated error structure. There is an ar1 process down depths z, and an anisotropic gaussian surface across the x and y dimensions.
+
+<<readDat, echo=FALSE>>=
+dat <- read.csv(file = "C:/Users/Lisa/Documents/phd/southern ocean/Mixed models/Data/ar1_z_agau_xy_200sim.csv", header = T)
+@
+
+The data were simulated 200 times using the same input values of:
+- noise.sd = 0.2
+- stn.re = 0.01
+- z.phi = 0.45
+- x.phi = 0.3
+- y.phi = 0.4
+
+The following histograms show the range of estimated values for each component. The red line indicates the true value and the blue line is the mean estimate from the 200 model fits.
+
+<<plotHist, echo=FALSE, fig.align='center'>>=
+#plot histogram of every variance component with fitted average and true values overlayed
+par(mfrow = c(2, 3))
+hist(dat$stn.sd, main = "stn.sd", xlab = "stn.sd")
+abline(v = 0.1, col = "red", lwd = 2)
+abline(v = mean(dat$stn.sd), col = "blue", lwd = 2)
+hist(dat$noise.sd, main = "noise.sd", xlim = c(0.19, 0.24), xlab = "noise.sd")
+abline(v = 0.2, col = "red", lwd = 2)
+abline(v = mean(dat$noise.sd), col = "blue", lwd = 2)
+hist(dat$z.phi, main = "z.phi", xlab = "z.phi")
+abline(v = 0.45, col = "red", lwd = 2)
+abline(v = mean(dat$z.phi), col = "blue", lwd = 2)
+hist(dat$x.phi, main = "x.phi", xlab = "x.phi")
+abline(v = 0.3, col = "red", lwd = 2)
+abline(v = mean(dat$x.phi), col = "blue", lwd = 2)
+hist(dat$y.phi, main = "y.phi", xlab = "y.phi")
+abline(v = 0.4, col = "red", lwd = 2)
+abline(v = mean(dat$y.phi), col = "blue", lwd = 2)
+@
+
+All values except the noise standard deviation were very accurate and reflected the true values that were used to generate the data. The noise sd estimates were still within 0.03 of the true value which is still very close. Next, the simulation will be generated for stations on an unequally spaced grid using the distances between stations calculated using their latitude and longitude.
+
+\end{document}
