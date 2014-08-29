@@ -1,0 +1,27 @@
+\documentclass{article}
+
+\begin{document}
+\title{3d Simulation}
+\author{Lisa-Marie Harrison}
+\maketitle
+
+The goal is to add in the first regression parameter into the 3D simulation study. 
+This parameter will be a proxy for temperature. To understand the relationship between
+temperature and depth (the only other variable already included in the model), a
+plot of temperature against depth for all stations is shown below.
+
+<<tempPlot, echo=FALSE>>=
+plot(glm.full$profile.depth[glm.full$temp < 5], glm.full$temp[glm.full$temp < 5], xlab = "depth", ylab = "temp")
+title("Temperature against depth with stations <50km from ice edge in red")
+rd.stn <- unique(ctd$station[which(ctd$distToIce <50)])
+points(glm.full$profile.depth[glm.full$stn %in% rd.stn], glm.full$temp[glm.full$stn %in% rd.stn], col = "red")
+@
+
+It appears that stations within 50km of the ice edge have a different temperature/depth
+relationship to those further offshore. Distance offshore is not a parameter that
+is currently included in the simulation study so for now, only one of these relationships
+will be captured in the simulation study. The closer stations have a negative 
+exponential like relationship, so this will be added to the simulation data set.
+
+
+\end{document}
