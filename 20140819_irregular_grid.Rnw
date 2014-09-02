@@ -1,0 +1,188 @@
+\documentclass{article}
+
+\begin{document}
+\title{Simulation with Irregular grid}
+\author{Lisa-Marie Harrison}
+\maketitle
+
+Now that the simulation works successfully on data where the stations are a regularly spaced grid, the next step is to place them irregularly because in reality, this is how acoustic/marine surveys are generally undertaken. The BROKE-West survey has 117 stations that are irregularly spaced. The latitude and longitude of each of these station will be used for the simulation study to make it as realistic as possible. 
+
+This simulation has 117 stations (spaced using the BROKE-West station coordinates), with each station having 51 equally spaced depths between 0 - 250m depth. Firstly, a plot of the latitude/longitude of each station:
+
+<<locationPlot, echo=FALSE, fig.align='center'>>=
+library(asreml)
+library(mgcv)
+library(fields)
+dat <- read.csv("C:/Users/Lisa/Documents/phd/southern ocean/Mixed models/Data/stn_coordinates.csv", header = T)
+
+#get latitude and longitude for each station
+lat  <- dat$latitude
+long <- dat$longitude
+
+plot(long, lat, xlab = "longitude", ylab = "latitude", main = "Locations of 117 stations")
+@
+
+The distance of each station in the x (longitude) and y (latitude) directions can be worked out using the haversine formula. It is necessary to do this, because ASReml cannot use latitude/longitude as coordinates for it's irregularly spaced data models because they are decimals. Multiplying to remove the decimal doesn't work because then ASReml assumes that the stations are much further apart than they are, which affects the scale of the correlation. The x and y distances from station are plotted below:
+
+<<distPlot, echo=FALSE, fig.align='center'>>=
+n.station <- length(lat)
+mu <- 50
+sd <- 40
+noise.sd <- 0.2 #noise sd
+stn.sd   <- 0.05 #sd for random station effect
+z.phi  <- 0.4 #ar1 autocorrelation down z
+x.phi <- 0.5 #gaussian autocorrelation across x
+y.phi <- 0.4 #gaussian autocorrelation across y
+
+mult <- 1e3
+z <- seq(0, 250, 5) #explanatory variable (depth)
+z.int <- rep(c(1:length(z)), n.station) #explanatory variable (depth)
+stn <- rep(c(1:n.station), 1, each = length(z))
+rho <- mult*dnorm(z, mu, sd)/(pnorm(max(z), mu, sd) - pnorm(min(z), mu, sd))
+stn.re <- rnorm(n.station, mean = 0, sd = stn.sd) #station specific random effect
+
+#random noise matrix
+r.noise <- rnorm(length(lat)*length(z), 0, noise.sd)
+
+#function to convert degrees to radians
+deg2rad <- function(deg) {
+  return(deg*pi/180)
+}
+
+#function to calculate the distance between two points with radian lat/long 
+#Uses the Haversine formula
+gcd.hf <- function(lat1, long1, lat2, long2) {
+  
+  R <- 6371 # Earth mean radius (km)
+  delta.long <- (long2 - long1)
+  delta.lat <- (lat2 - lat1)
+  a <- sin(delta.lat/2)^2 + cos(lat1) * cos(lat2) * sin(delta.long/2)^2
+  c <- 2 * asin(min(1,sqrt(a)))
+  d = R * c
+  return(d) # Returns distance (km)
+  
+}
+
+#calculate distance of each station from each other station in x-direction
+dist_x <- matrix(0, ncol = n.station, nrow = n.station)
+for (i in 1:n.station) {
+  for (k in 1:n.station) {
+    dist_x[i, k] <- gcd.hf(deg2rad(lat[i]), deg2rad(long[i]), deg2rad(lat[k]), deg2rad(long[i]))/100   
+  }
+}
+
+#calculate distance of each station from each other station in y-direction
+dist_y <- matrix(0, ncol = n.station, nrow = n.station)
+for (i in 1:n.station) {
+  for (k in 1:n.station) {
+    dist_y[i, k] <- gcd.hf(deg2rad(lat[i]), deg2rad(long[i]), deg2rad(lat[i]), deg2rad(long[k]))/100
+  }
+}
+
+#get distance of each station from station 1 in x and y directions
+x <- dist_x[1, ]
+y <- dist_y[1, ]
+
+plot(-y, -x, xlab = "Distance from station 1 (100 km)", ylab = "Distance from station 1 (100 km)", main = "Distance (x and y) from station 1 using Haversine formula")
+
+@
+
+The latitude and longitude cannot directly be used as the distances for the correlation structure (i.e.: agau(lat, long)) because asreml is expecting locations where the distance is calculated as (x1 - x2)2 in the x-direction for example. For this reason, the distance between each set of stations along the surface of the earth is worked out using the Haversine formula as above. The distance of each station in the x and y direction from  station 1 is used to form the distance matrix when generating the simulated data. This is done in the same way that it was with the regular grid. For the anisotropic gaussian situation, the distance matrix in the x direction is calculated as (xi - xj)2, and the y direction is (yi - yj)2 for each set of stations [i, j]. 
+
+<<createCor, echo=FALSE>>=
+#create distance matrix for x and y directions using distance from station 1
+adist_x <- matrix(0, ncol = n.station, nrow = n.station)
+for (i in 1:n.station) {
+  for (j in 1:n.station) {    
+    adist_x[i, j] <- (x[i] - x[j])^2    
+  }
+}
+
+adist_y <- matrix(0, ncol = n.station, nrow = n.station)
+for (i in 1:n.station) {
+  for (j in 1:n.station) {    
+    adist_y[i, j] <- (y[i] - y[j])^2     
+  }
+}
+
+#change distances into a distance object
+adist_x <- as.matrix(as.dist(adist_x, diag = FALSE, upper = FALSE))
+adist_y <- as.matrix(as.dist(adist_y, diag = FALSE, upper = FALSE))
+
+#create the correlation structure
+omega1 <- (x.phi^adist_x ) * (y.phi^adist_y)
+
+#calculate correlation weights, and invert weights matrix
+weights <- chol(solve(omega1))
+weights_inv <- solve(weights)
+
+#form the combined correlated error component
+t.cor <- rep(0, length(r.noise))
+for (k in 2:length(z)) {
+  z.data <- matrix(r.noise[z.int == k], ncol = 1) #random noise for all stations at depth k
+  xy_error <- weights_inv %*% z.data
+  for (i in 1:n.station) {
+    w <- which(stn == i & z.int == k)
+    t.cor[w] <- t.cor[stn == i & z.int == (k - 1)]*z.phi + xy_error[i] #first component is ar1(z), second is agau(x, y)
+  }
+}
+
+#calculate the total observations
+l.obs <- rep(log(rho), n.station) + t.cor + rep(stn.re, 1, each = length(rho))
+obs <- exp(l.obs)
+
+
+#data frame
+glm.spl <- data.frame(obs, l.obs, rep(z, n.station), as.factor(rep(c(1:n.station), 1, each = length(z))), rep(x, 1, each = 51), rep(y, 1, each = 51))
+names(glm.spl) <- c("obs", "l.obs", "z", "stn", "x", "y")
+glm.spl$z.fact <- as.factor(as.integer(glm.spl$z))
+glm.spl$x.fact <- as.factor(glm.spl$x)
+glm.spl$y.fact <- as.factor(glm.spl$y)
+glm.spl <- glm.spl[order(glm.spl$z, glm.spl$x, glm.spl$y), ] #sort by order of rcov structure
+@
+
+The ASReml model and results are shown below:
+
+<<asremlResults>>=
+asreml.fit <- asreml(fixed = l.obs ~ z, random =~ spl(z) + stn, data = glm.spl, 
+                     splinepoints = list(z = seq(0, 250, 25)), rcov=~ ar1(z.fact):agau(x, y))
+summary(asreml.fit)
+
+@
+
+<<comparisonTable, echo=FALSE>>=
+vals <- matrix(c(stn.sd, noise.sd, z.phi, x.phi, y.phi, round(summary(asreml.fit)$varcomp[2,2]^0.5, 2), round(summary(asreml.fit)$varcomp[3,2]^0.5, 2), round(summary(asreml.fit)$varcomp[4,2], 2), round(summary(asreml.fit)$varcomp[5,2], 2), round(summary(asreml.fit)$varcomp[6,2], 2)), ncol = 2)
+colnames(vals) <- c("true", "fitted")
+rownames(vals) <- c("stn", "noise", "z ar1", "x agau", "y agau")
+vals
+@
+
+The same model as above was repeated 200 times to assess the distribution of the estimated variance components. The results are shown below. 
+
+<<simResults, echo=FALSE, fig.align='center'>>=
+est <- read.csv("C:/Users/Lisa/Documents/phd/southern ocean/Mixed models/Data/3d_ar1_agau_irregular_grid_estimates.csv", header = T)
+
+#plot histogram of every variance component with fitted average and true values overlayed
+par(mfrow = c(2, 3))
+hist(est$stn.sd, main = "stn.sd")
+abline(v = 0.1, col = "red", lwd = 2)
+abline(v = mean(est$stn.sd), col = "blue", lwd = 2)
+hist(est$noise.sd, main = "noise.sd", xlim = c(0.19, 0.23))
+abline(v = 0.2, col = "red", lwd = 2)
+abline(v = mean(est$noise.sd), col = "blue", lwd = 2)
+hist(est$z.phi, main = "z.phi")
+abline(v = 0.4, col = "red", lwd = 2)
+abline(v = mean(est$z.phi), col = "blue", lwd = 2)
+hist(est$x.phi, main = "x.phi")
+abline(v = 0.3, col = "red", lwd = 2)
+abline(v = mean(est$x.phi), col = "blue", lwd = 2)
+hist(est$y.phi, main = "x.phi")
+abline(v = 0.4, col = "red", lwd = 2)
+abline(v = mean(est$y.phi), col = "blue", lwd = 2)
+@
+
+The above simulation uses the distance in km between stations (in the x and y directions) /100 because otherwise the simulated correlation pattern is too small to be realistic because the stations are so far apart in the real data set. These distances are also used for fitting the model. This is also probably the scale that should be used when fitting the actual data. It will also be necessary to convert the latitudes and longitudes into distances rather than using the raw values as has previously been done. This allows us to get a more meaningful estimate of the phi autocorrelation values because they will be in relation to meters between stations rather than arbitrary latitude/longitude values.
+
+The estimated values for the above 200 simulations all look very good and have a mean of almost exactly the correct value except noise.sd, which is always slightly higher than the actual value. However this is unlikely to be problematic because the estimated mean is still within 0.02 of the correct value. When running the simulation on the larger distance values (not divided by 100) the estimates are much more varied and further from the truth. This may be because the simulated autocorrelation pattern is of a too smaller scale than the model can detect given that the stations are spaced so far apart when using the actual BROKE-West coordinates. 
+
+\end{document}
