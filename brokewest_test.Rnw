@@ -1,0 +1,269 @@
+\documentclass{article}
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+\title{BROKE-West asreml test}
+\author{Lisa-Marie Harrison}
+\maketitle
+
+To test the model, 30 stations from the 118 BROKE-West stations were used. For comparison, the model was fit with and without a correlation structure. A plot of the locations of the 30 stations is shown below. Every 3rd station in the full data set was used to thin the data without losing the spatial nature.
+
+<<readData, echo=FALSE>>=
+dat.cut <- read.csv(file = "C:/Users/Lisa/Documents/phd/southern ocean/Mixed models/Data/rstnCTD.csv", header= T)
+library(asreml)
+library(nlme)
+library(lattice)
+library(mgcv)
+library(chron)
+
+#remove null values
+dat.cut$sal[dat.cut$sal == -9] <- NA
+dat.cut$temp[dat.cut$temp == -9] <- NA
+dat.cut$par[dat.cut$par == -9] <- NA
+dat.cut$fluoro[dat.cut$fluoro == -9] <- NA
+
+#get latitude and longitude for each station
+n.station <- length(unique(dat.cut$stn))
+lat  <- dat.cut$lat[duplicated(dat.cut$stn) == FALSE]
+long <- dat.cut$long[duplicated(dat.cut$stn) == FALSE]
+
+#find maximum fluorescence depth
+max.depth <- 0
+for (i in 1:length(unique(dat.cut$stn))) {
+  max.depth[i] <- which.max(dat.cut$l.fluoro[dat.cut$stn == unique(dat.cut$stn)[i]])
+}
+dat.cut$max.depth <- rep(unique(dat.cut$profile.depth)[max.depth], each = 125)
+
+
+#function to convert degrees to radians
+deg2rad <- function(deg) {
+  return(deg*pi/180)
+}
+
+#Calculates the distance between two points with radian latitude/longitude using Haversine formula (hf)
+gcd.hf <- function(lat1, long1, lat2, long2) {
+  R <- 6371 # Earth mean radius [km]
+  delta.long <- (long2 - long1)
+  delta.lat <- (lat2 - lat1)
+  a <- sin(delta.lat/2)^2 + cos(lat1) * cos(lat2) * sin(delta.long/2)^2
+  c <- 2 * asin(min(1,sqrt(a)))
+  d = R * c
+  return(d) # Distance in km
+}
+
+dist_x <- matrix(0, ncol = n.station, nrow = n.station)
+for (i in 1:n.station) {
+  for (k in 1:n.station) {
+    dist_x[i, k] <- gcd.hf(deg2rad(lat[i]), deg2rad(long[i]), deg2rad(lat[k]), deg2rad(long[i]))/100
+  }
+}
+
+dist_y <- matrix(0, ncol = n.station, nrow = n.station)
+for (i in 1:n.station) {
+  for (k in 1:n.station) {
+    dist_y[i, k] <- gcd.hf(deg2rad(lat[i]), deg2rad(long[i]), deg2rad(lat[i]), deg2rad(long[k]))/100
+  }
+}
+
+#get distance of each station from station 1 in x and y directions
+x <- dist_x[1, ]
+y <- dist_y[1, ]
+
+
+#data frame
+glm.spl <- data.frame(log(dat.cut$fluoro - min(na.omit(dat.cut$fluoro))), dat.cut$profile.depth, as.factor(dat.cut$stn), rep(x, 1, each = length(unique(dat.cut$profile.depth))), rep(y, 1, each = length(unique(dat.cut$profile.depth))), dat.cut$temp, dat.cut$par, dat.cut$sal, dat.cut$oxy, dat.cut$ice, as.factor(dat.cut$water.mass), dat.cut$days.elapsed, dat.cut$start.time, dat.cut$max.depth)
+names(glm.spl) <- c("l.obs", "z", "stn", "x", "y", "temp", "par", "sal", "oxy", "ice", "wm", "day", "time", "max.depth")
+glm.spl$z.fact <- as.factor(as.integer(glm.spl$z))
+glm.spl$x.fact <- as.factor(glm.spl$x)
+glm.spl$y.fact <- as.factor(glm.spl$y)
+glm.spl <- glm.spl[order(glm.spl$z, glm.spl$x, glm.spl$y), ] #sort by order of rcov structure
+glm.spl$l.obs[glm.spl$l.obs == -Inf] <- NA
+
+#centre and scale covariates to mean = 0 and sd = 1
+#this is required if using na.method = "include" since this sets the missing values to 0
+glm.spl$temp <- scale(glm.spl$temp)
+glm.spl$par  <- scale(glm.spl$par)
+glm.spl$sal  <- scale(glm.spl$sal)
+glm.spl$oxy  <- scale(glm.spl$oxy)
+glm.spl$ice  <- scale(glm.spl$ice)
+glm.spl$oxy  <- scale(glm.spl$oxy)
+glm.spl$max.depth  <- scale(glm.spl$max.depth)
+@
+
+<<stnLocation, results=hide, echo=FALSE>>=
+png("station_location.png")
+plot(unique(dat.cut$long), unique(dat.cut$lat), col = "white", xlab = "longitude", ylab = "latitude")
+text(unique(dat.cut$long), unique(dat.cut$lat), labels = unique(dat.cut$stn))
+title("Latitude and longitude of 30 station subset of BROKE-West CTD stations")
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{station_location.png}
+\end{center}
+
+\paragraph{Depth of maximum fluorescence}~\\
+
+The depth of maximum fluorescence at each station was calculated. The following four plots show the depth of fluorescence maximum against latitude, longitude, time of day and days since start of survey. It looks like there might be a spatial pattern where the maximum fluorescence depth changes with latitude. Stations closer to Antarctica have a shallower maximum fluorescence depth. I haven't had a chance to look any further into this yet.
+
+<<maxDepth, echo=FALSE, results=hide>>=
+png("fluoro_depth.png")
+par(mfrow = c(2, 2))
+plot(dat.cut$lat, dat.cut$max.depth, xlab = "latitude", ylab = "maximum fluoro depth", pch = 19)
+plot(dat.cut$long, dat.cut$max.depth, xlab = "longitude", ylab = "maximum fluoro depth", pch = 19)
+ctd.times <- chron(times. = dat.cut$start.time, format = "h:m:s")
+plot(ctd.times, dat.cut$max.depth, xlab = "time of day", ylab = "maximum fluoro depth", xaxt = "n", pch = 19)
+axis(side = 1, at = seq(0, 1, by  = 0.2), chron(times.= seq(min(ctd.times), max(ctd.times), length.out = 6), out.format = "h:m:s"))
+plot(dat.cut$days.elapsed, dat.cut$max.depth, xlab = "days since start of survey", ylab = "maximum fluoro depth", pch = 19)
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{fluoro_depth.png}
+\end{center}
+
+\paragraph{Current Data}\\~
+
+The Acoustic Doppler Current Profiler (ADCP) data around each CTD station was extracted from the ADCP matlab files. The current data are divided into 30 minute intervals during the survey. The interval during which each CTD drop started was used. The current profiles are plotted against depth below. The ADCP was sometimes broken during the survey so there are numerous stations without any current data. Note: The ADCP only takes measurements every 8m down the water column so not every CTD measurement (2m scale) will have a current measurement associated with it. The current variable did not improve the asreml models and hence hasn't been included from here on.
+
+<<adcpCurrent, echo=FALSE, results=hide>>=
+png("current.png")
+xyplot(-dat.cut$profile.depth ~ dat.cut$current | as.factor(dat.cut$stn), xlab = "current strength (m/s)", ylab = "depth", main = "Current strength at each station using ADCP data")
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{current.png}
+\end{center}
+
+\paragraph{Temperature/Depth relationship}~\\
+
+Plotting temperature against depth for all 30 stations shows a couple of different patterns. When the points are coloured by water mass type (4 watermasses are present) some of this difference is explained, with green and blue water masses behaving differently at depths > 100m (thermocline is a determining factor in water mass so this is logical). In the asreml model, a separate spline is fit for temperature by water mass to attempt to capture this effect. This interaction term improved the model AIC and has been left in.
+
+<<tempPlot, echo=FALSE, results=hide>>=
+png("temp.png")
+plot(dat.cut$profile.depth, dat.cut$temp, xlab = "depth (m)", ylab = "temperature (degrees celcius)", col = dat.cut$water.mass)
+title("temperature by depth, with 4 water masses as colour")
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{temp.png}
+\end{center}
+
+\paragraph{ASReml models}~\\
+
+The asreml models are then run. The correlation structure has the form: ar1(depth), agau(x, y). The x and y parameters are the distance in km from station 1 in the x and y directions calculated using the haversine distance across the surface of the earth (between latitude and longitude coordinates). 
+
+<<fitASReml, echo=TRUE>>=
+#fit the asreml model with ar1:agau correlation structure
+asreml.fit <- asreml(fixed = l.obs ~ z + par + temp:diag(wm) + ice + oxy, random =~ spl(z, 10) + spl(par, 10) + spl(temp, 10):diag(wm) +  spl(ice, 10) + spl(oxy, 10) + stn,  data = glm.spl, rcov=~ ar1(z.fact):agau(x.fact, y.fact),
+na.method.X = "include", workspace = 50000000)
+asreml.fit <- update(asreml.fit)
+
+summary(asreml.fit)
+@
+
+The same model is fitted without the correlation structure for comparison:
+
+<<asremlSummary, echo=TRUE>>=
+#fit the same asreml model but without the correlation structure
+fit <- asreml(fixed = l.obs ~ z + par + temp:diag(wm) + ice + oxy, random =~ spl(z, 10) + spl(par, 10) + spl(temp, 10):diag(wm) +  spl(ice, 10) + spl(oxy, 10) + stn, data = glm.spl, na.method.X = "include", workspace = 50000000)
+
+summary(fit)
+@
+
+There is strong correlation evident in the x, y and z directions. The fitted vs observed values for the two models are shown below:
+
+<<fitObs, echo=FALSE, results=hide>>=
+png("asreml_output.png")
+#plot fitted against observed for all stations for model with correlation structure
+lat.plot <- xyplot(glm.spl$l.obs + fitted(asreml.fit) ~ glm.spl$z | glm.spl$stn, 
+                   outer = FALSE, type = "l", xlab = "depth (m)", ylab = "l.fluoro", main = "Fitted (red) and observed (blue) for model with correlation structure")
+update(lat.plot, par.settings = simpleTheme(lwd = c(2, 1), col = c("dodgerblue", "red")))
+dev.off()
+png("asreml_output_no_correlation.png")
+#plot fitted against observed for all stations for model without correlation structure
+lat.plot <- xyplot(glm.spl$l.obs + fitted(fit) ~ glm.spl$z | glm.spl$stn, 
+                   outer = FALSE, type = "l", xlab = "depth (m)", ylab = "l.fluoro", main = "Fitted (red) and observed (blue) for model without correlation structure")
+update(lat.plot, par.settings = simpleTheme(lwd = c(2, 1), col = c("dodgerblue", "red")))
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{asreml_output.png}
+  \includegraphics{asreml_output_no_correlation.png}
+\end{center}
+
+A wald test shows that all of the fixed effect terms are significant and a likelihood ratio test shows that the model with a correlation structure is far better:
+
+<<waldTest, echo=FALSE>>=
+wald(asreml.fit)
+@
+
+The model residuals at 50m depth are plotted by latitude and longitude to assess whether there are any spatial patterns evident. A depth of 50m was chosesn because this is the mean depth of the fluorescence maximum. The residuals are for the model with a correlation structure.
+<<modelResid, echo=FALSE, results=hide>>=
+#bubble plot of residuals by station
+png("residuals_bubble.png")
+res <- residuals(asreml.fit)[glm.spl$z == 50][order(glm.spl$stn[glm.spl$z == 50])]
+radius <- sqrt(abs(res) / pi)
+color <- rep("blue", length(radius))
+color[res < 0] <- "red"
+symbols(unique(dat.cut$long), unique(dat.cut$lat), circles=radius, inches = 0.35, fg = color, xlab = "longitude", ylab = "latitude")
+title("Residuals (blue = positive & red = negative) for 30 BROKE-West stations")
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{residuals_bubble.png}
+\end{center}
+
+\paragraph{Prediction from the model}~\\
+
+The model with a correlation structure was used to predict the l.fluoro values at a further 10 stations that were not used in the initial model fitting process. The predict function of asreml was run using the model and the environmental variables at each of the 10 stations. The predictions are not very good, which is probably to be expected! The predicted vs observed values are shown below:
+
+<<predStn, echo=FALSE, results=hide>>=
+pval <- read.csv("C:/Users/Lisa/Documents/phd/southern ocean/Mixed models/Data/pred_with_correlation.csv", header = T)$pval
+extra.dat <- read.csv(file = "C:/Users/Lisa/Documents/phd/southern ocean/Mixed models/Data/ctd_data.csv", header = T)
+extra.dat <- extra.dat[extra.dat$stn %in% c(3, 13, 23, 33, 43, 53, 63, 73, 83, 93), ] #use 10 BROKE-West stations that weren't used to fit the model
+
+#scale parameters (necessary if there are missing variables)
+extra.dat$temp <- scale(extra.dat$temp)
+extra.dat$ice <- scale(extra.dat$ice)
+extra.dat$par <- scale(extra.dat$par)
+
+#plot predicted values against observed values
+png("predict.png")
+lat.plot <- xyplot(extra.dat$l.fluoro + pval ~ extra.dat$profile.depth | extra.dat$stn, outer = FALSE, type = "l", xlab = "depth (m)", ylab = "l.fluoro", main = "Observed (blue) vs predicted (red) by station")
+update(lat.plot, par.settings = simpleTheme(lwd = c(2, 1), col = c("dodgerblue", "red")))
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{predict.png}
+\end{center}
+
+\paragraph{GAMM for comparison}~\\
+
+A GAMM was fitted to the 30 test stations for comparison using the mgcv package. The GAMM had only an ar1(depth) correlation structure but had latitude and longitude as random variables. The model really struggled to fit the shallower depths compared to ASReml. Like with ASReml, the GAMM also estimated very high correlation down depths (~0.97). The output is shown below.
+
+<<gammModel, echo=TRUE>>=
+#fit gamm model
+gamm.fit <- gamm(l.obs ~ s(z) + s(temp, by = wm) + s(par) + s(ice), random = list(stn =~ 1, x =~1, y =~1), 
+                 data = glm.spl, correlation = corAR1(0.9, 1 ~ z | x | y))
+summary(gamm.fit$gam)
+@
+
+<<gamPlot, echo=FALSE, results=hide>>=
+#plot fitted against observed by station
+png("gam_plot.png")
+lat.plot <- xyplot(glm.spl$l.obs + fitted(gamm.fit$gam) ~ glm.spl$z | glm.spl$stn, outer = FALSE, type = "l")
+update(lat.plot, par.settings = simpleTheme(lwd = c(2, 1), col = c("dodgerblue", "red")))
+dev.off()
+@
+
+\begin{center}
+  \includegraphics{gam_plot.png}
+\end{center}
+
+\end{document}
